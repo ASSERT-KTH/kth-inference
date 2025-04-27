@@ -4,12 +4,17 @@ Perfect for use on KTH's DGX H100 since it mostly sits idle ¯\\_(ツ)_/¯
 
 ## Quick Start
 
-1. Start the vLLM server:
+1. Install the dependencies
+```bash
+pip install .
+```
+
+2. Start the vLLM server:
 ```bash
 sh serve.sh
 ```
 
-2. In a separate terminal, start the chat interface:
+3. In a separate terminal, start the chat interface:
 ```bash
 uv run chat.py
 ```
