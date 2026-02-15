@@ -323,9 +323,20 @@ class ChatInterface:
         # Message height cache
         self.message_heights = {}
         
+        # Set default max_tokens
+        self.max_tokens = 4096
+        
         # Add system message if provided
         if system_prompt:
             self.add_message("system", system_prompt)
+    
+    def _update_max_tokens(self):
+        """Update max_tokens based on the current model name."""
+        if self.model_name and "gpt-oss-20b" in self.model_name.lower():
+            self.max_tokens = 32768
+            console.print(f"[bold cyan]Detected gpt-oss-20b model. Setting max_tokens to {self.max_tokens} (32k context).[/bold cyan]")
+        else:
+            self.max_tokens = 4096
     
     def add_message(self, role, content):
         """Add a message to the conversation."""
@@ -594,7 +605,7 @@ class ChatInterface:
             "model": self.model_name,
             "messages": api_messages,
             "stream": True,
-            "max_tokens": 16384
+            "max_tokens": self.max_tokens
         }
         
         try:
@@ -694,15 +705,29 @@ class ChatInterface:
         
         # Get available models
         available_models = get_available_models(self.api_url)
+        
         if available_models:
             console.print("[cyan]Available models:[/cyan]")
             for model in available_models:
                 console.print(f"  - {model}")
             
+            # If no model was specified, use the first available one
+            if not self.model_name:
+                self.model_name = available_models[0]
+                console.print(f"[cyan]No model specified. Using the first available model: [bold]{self.model_name}[/bold][/cyan]")
+            
             # Check if the requested model is available
-            if self.model_name not in available_models:
+            elif self.model_name not in available_models:
                 console.print(f"[yellow]Warning: Model '{self.model_name}' not found in available models.[/yellow]")
                 console.print(f"[yellow]Will try to use it anyway, but it might not work.[/yellow]")
+        elif self.model_name:
+            console.print(f"[yellow]Warning: Could not fetch model list. Proceeding with '{self.model_name}'.[/yellow]")
+        else:
+            console.print("[bold red]Error: No model specified and could not fetch available models from server.[/bold red]")
+            return
+        
+        # Update max_tokens once the model name is resolved
+        self._update_max_tokens()
         
         print_header(self.model_name)
         console.print("[dim italic]Watch the tokens/s display for real-time generation speed![/dim italic]")
@@ -771,14 +796,14 @@ class ChatInterface:
 
 def main():
     """Main function."""
-    # Get default model from environment or use QwQ-32B
-    default_model = os.environ.get("VLLM_MODEL", "Qwen/QwQ-32B-AWQ")
+    # Get model from environment if available
+    env_model = os.environ.get("VLLM_MODEL")
     
     parser = argparse.ArgumentParser(description="Enhanced CLI chat interface for LLMs")
     parser.add_argument("--api", type=str, default="http://localhost:8000/v1/chat/completions",
                         help="URL of the OpenAI-compatible API (default: http://localhost:8000/v1/chat/completions)")
-    parser.add_argument("--model", type=str, default=default_model,
-                        help=f"Model name to use (default: {default_model})")
+    parser.add_argument("--model", type=str, default=env_model,
+                        help="Model name to use (default: fetched from /v1/models if not specified)")
     parser.add_argument("--system", type=str, 
                         default="You are a helpful, respectful and honest assistant. Always answer as helpfully as possible.",
                         help="System prompt to set the behavior of the assistant")
