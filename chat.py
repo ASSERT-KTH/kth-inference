@@ -331,12 +331,75 @@ class ChatInterface:
             self.add_message("system", system_prompt)
     
     def _update_max_tokens(self):
-        """Update max_tokens based on the current model name."""
-        if self.model_name and "gpt-oss-20b" in self.model_name.lower():
-            self.max_tokens = 32768
-            console.print(f"[bold cyan]Detected gpt-oss-20b model. Setting max_tokens to {self.max_tokens} (32k context).[/bold cyan]")
-        else:
-            self.max_tokens = 4096
+        """Update max_tokens by probing the vLLM server."""
+        console.print(f"[yellow]Probing vLLM server for max_tokens limit...[/yellow]")
+        
+        # Probe with a very high value to see if vLLM tells us the limit
+        payload = {
+            "model": self.model_name,
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1000000,
+            "stream": False
+        }
+        
+        try:
+            response = requests.post(self.api_url.replace("/chat/completions", ""), json=payload, timeout=10)
+            # Actually we should hit the chat completions endpoint for probing if we want consistent behavior
+            response = requests.post(self.api_url, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                self.max_tokens = 1000000 // 2
+                console.print(f"[bold cyan]Server accepted 1,000,000 tokens. Setting max_tokens to {self.max_tokens}.[/bold cyan]")
+                return
+
+            try:
+                error_msg = response.json().get("error", {}).get("message", "")
+            except:
+                error_msg = response.text
+                
+            match = re.search(r"maximum context length is (\d+)", error_msg)
+            if match:
+                detected_limit = int(match.group(1))
+                self.max_tokens = detected_limit // 2
+                console.print(f"[bold cyan]Detected max_tokens limit from server: {detected_limit}. Setting chat limit to {self.max_tokens}.[/bold cyan]")
+                return
+        except Exception as e:
+            console.print(f"[yellow]Probing failed: {str(e)}. Using default.[/yellow]")
+            self.max_tokens = 4096 // 2
+            return
+
+        # Fallback to binary search if parsing failed
+        console.print("[yellow]Could not detect limit from error. Using binary search...[/yellow]")
+        
+        def test_limit(n):
+            p = {
+                "model": self.model_name,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": n,
+                "stream": False
+            }
+            try:
+                # Use shorter timeout for binary search
+                r = requests.post(self.api_url, json=p, timeout=5)
+                return r.status_code == 200
+            except:
+                return False
+
+        low = 1
+        high = 262144  # 256k
+        best = 4096
+        
+        # Binary search
+        while low <= high:
+            mid = (low + high) // 2
+            if test_limit(mid):
+                best = mid
+                low = mid + 1
+            else:
+                high = mid - 1
+        
+        self.max_tokens = best // 2
+        console.print(f"[bold cyan]Empirical max_tokens limit detected: {best}. Setting chat limit to {self.max_tokens}.[/bold cyan]")
     
     def add_message(self, role, content):
         """Add a message to the conversation."""
