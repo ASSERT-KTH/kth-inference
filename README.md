@@ -71,11 +71,7 @@ uv run vllm serve <model> \
   supported — `Qwen3ForCausalLM`, `Qwen3MoeForCausalLM`, `Qwen3NextForCausalLM`,
   `Qwen3VLForConditionalGeneration`, `Qwen3VLMoeForConditionalGeneration`,
   `Qwen3OmniMoeForConditionalGeneration`. **Not supported**:
-  `Qwen3_5ForConditionalGeneration` (Qwen3.5-VL) — serving it needs a newer vLLM.
-- **Cache gotcha**: the cached dir `models--Qwen--Qwen3.8-27B` is *not* a 27B dense
-  model — its config is `Qwen3_5ForConditionalGeneration` (Qwen3.5-VL, multimodal,
-  52 GiB), which the current vLLM cannot load. Don't trust the directory name; check
-  `config.json` `architectures`.
+  `Qwen3_5ForConditionalGeneration` (Qwen3.5 family) — see below.
 
 ### Throughput reference
 
@@ -83,6 +79,36 @@ uv run vllm serve <model> \
 |-------|---------------|-------------|----------------------|
 | Qwen3-Coder-30B-A3B-Instruct | bf16 + fp8 KV | `qwen3_coder` | ~178 tok/s |
 | QwQ-32B (see below) | AWQ-Marlin | — | ~78 tok/s |
+
+## Qwen3.5 family (Qwen3.8-27B)
+
+The cached `models--Qwen--Qwen3.8-27B` is **Qwen3.8-27B**, a native vision-language
+dense model built on the **Qwen3.5 architecture** (`model_type: qwen3_5`, arch
+`Qwen3_5ForConditionalGeneration`). Findings (2026-09-06):
+
+- **Not servable on the installed stack.** vLLM 0.15.1 does not register
+  `Qwen3_5ForConditionalGeneration`, and transformers 4.57.6 does not know
+  `qwen3_5`. The model card asks for `transformers 5.8.0.dev0`.
+- **Runs via transformers ≥ 5.8** (tested with a throwaway venv on 5.9.0 +
+  torchvision + torch 2.11+cu128):
+  ```bash
+  uv venv --python 3.11 .venv
+  uv pip install --python .venv/bin/python transformers==5.9.0 accelerate \
+      safetensors pillow torchvision torch --torch-backend=cu128
+  ```
+  Load with `AutoModelForImageTextToText` + `AutoProcessor` (torchvision is
+  required by the video preprocessor). Text-only smoke test generated coherent
+  output; thinking mode is on by default (emits a `</think>` block).
+- **Numbers:** loaded in ~34s, peak **54.9 GiB** (bf16, 27B dense), fits the H100
+  slice. Decode was only **~2.7 tok/s** — this is the *slow eager path*: the
+  `qwen3_5` architecture uses linear/hybrid attention whose fast kernels
+  (`flash-linear-attention`, `causal-conv1d`) were not installed, so it fell back
+  to the pure-torch implementation. Install those (and use vLLM once it supports
+  the arch) for usable speed.
+- **To serve it properly** you need a newer vLLM than 0.15.1 (latest on PyPI is
+  0.28.0; verify `Qwen3_5ForConditionalGeneration` is in
+  `ModelRegistry.get_supported_archs()` before committing to the download) in its
+  own venv, not the pinned 0.15.1 used by the other serve scripts.
 
 ## Performance Notes
 
