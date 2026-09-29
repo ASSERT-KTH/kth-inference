@@ -143,6 +143,57 @@ out = model.generate(**inputs, max_new_tokens=80)   # thinking mode on by defaul
 - **To serve properly** you need a newer vLLM than 0.15.1 (latest on PyPI is 0.28.0;
   verify `Qwen3_5ForConditionalGeneration` is in `get_supported_archs()` before the
   multi-GB download) in its own venv, not the pinned 0.15.1 of the other serve scripts.
+- **Newer vLLM doesn't run on this driver either.** vLLM 0.24.0 and 0.28.0 do list
+  `Qwen3_5ForConditionalGeneration`, but their wheels are built on torch CUDA 13.0 and
+  the gpu1 driver is CUDA 12.4: the engine dies with `The NVIDIA driver on your system
+  is too old (found version 12040)`. torch **cu128** runs fine on this driver (training
+  and the 0.15.1 serve scripts use it). Until there's a cu12x vLLM build that knows
+  `qwen3_5`, generate with transformers.
+
+### LoRA fine-tuning (TRL + peft)
+
+Tested 2026-09-29 on `Qwen/Qwen3.8-27B`, bf16 LoRA r=16 on all linear layers,
+torch 2.9.0+cu128, transformers 5.17.0, TRL 1.13.0, peft 0.21.0. Running it takes
+four workarounds:
+
+1. **TRL loads the image processor**, so the venv needs `pillow` and a `torchvision`
+   that matches torch (`torchvision==0.24.0` from the cu128 index for torch 2.9.0).
+   Otherwise: `ImportError: Qwen2VLImageProcessor requires the PIL library`.
+2. **Load the text-only causal LM yourself** and pass the object to `SFTTrainer`.
+   `AutoModelForCausalLM` gives `Qwen3_5ForCausalLM` (26.9B params, 50 GiB bf16, fits
+   the 80 GB H100). With a model *name*, TRL takes its VLM path, `device_map="auto"`
+   offloads to CPU ("Some parameters are on the meta device"), and backward fails
+   (`MmBackward0 returned an invalid gradient ... expected device meta`). Forcing
+   `device_map={"": 0}` on that path then OOMs at load. Pass
+   `processing_class=AutoTokenizer...` so no processor is built.
+3. **`loss_type="nll"`.** The default chunked loss patches `lm_head` and assumes a
+   bound `forward`; here it's a `functools.partial`:
+   `AttributeError: 'functools.partial' object has no attribute '__func__'`.
+4. **Disable thinking in the chat template.** By default it injects a "Reasoning effort
+   is set to xhigh..." system text and an open `<think>` block, so prompt and
+   prompt+completion tokenize differently (TRL: `Mismatch between tokenized prompt and
+   the start of tokenized prompt+completion`) and the completion-only loss mask is
+   wrong. Pre-render plain-text prompts with
+   `apply_chat_template(..., add_generation_prompt=True, enable_thinking=False)`
+   (they end in an empty `<think>\n\n</think>\n\n`), and pass
+   `chat_template_kwargs={"enable_thinking": False}` at inference. Qwen2.5 templates
+   ignore the flag.
+
+```python
+model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3.8-27B", dtype=torch.bfloat16,
+                                             device_map={"": 0})
+tok = AutoTokenizer.from_pretrained("Qwen/Qwen3.8-27B")
+cfg = SFTConfig(loss_type="nll", bf16=True, gradient_checkpointing=True,
+                per_device_train_batch_size=2, gradient_accumulation_steps=16, ...)
+SFTTrainer(model=model, processing_class=tok, args=cfg, train_dataset=ds,  # plain-text
+           peft_config=LoraConfig(r=16, lora_alpha=32, target_modules="all-linear",
+                                  task_type="CAUSAL_LM"))                  # prompt/completion
+```
+
+Throughput: ~1.7 samples/s (prompts ~300 tokens median, ~19 s per 32-example
+step) vs ~10.8 samples/s for Qwen2.5-Coder-7B with the same data, so about 8 h
+per epoch of 48k examples. Also check with transformers 5: `warmup_ratio` is gone
+from `TrainingArguments`; use `warmup_steps=<float in [0,1)>` for a ratio.
 
 ## Performance Notes
 
