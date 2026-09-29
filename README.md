@@ -5,15 +5,16 @@ Perfect for use on KTH's DGX H100 since it mostly sits idle ¯\\_(ツ)_/¯
 ## Models
 
 One folder per model: `requirements.txt` is its venv spec, `serve.sh` (or `setup.sh`) runs
-it, and `README.md` has its howto and findings.
+it, and `README.md` has its howto and findings. Oldest first; the date is when the served
+Hugging Face repo was created (`createdAt` in the Hub API).
 
-- [`models/Qwen3-Coder-30B-A3B-Instruct`](models/Qwen3-Coder-30B-A3B-Instruct): vLLM 0.15.1, ~178 tok/s, `qwen3_coder` tool calls; recipe for recent Qwen3 models
-- [`models/QwQ-32B-AWQ`](models/QwQ-32B-AWQ): vLLM 0.15.1, AWQ-Marlin, ~78 tok/s
-- [`models/Llama-3.3-70B-Instruct-FP8-dynamic`](models/Llama-3.3-70B-Instruct-FP8-dynamic): vLLM 0.15.1, FP8
-- [`models/Qwen2.5-VL-7B-Instruct`](models/Qwen2.5-VL-7B-Instruct): vLLM 0.15.1, vision-language
-- [`models/Qwen2.5-Coder-7B-Instruct`](models/Qwen2.5-Coder-7B-Instruct): vLLM 0.15.1, base + LoRA adapters; cheap to fine-tune (~75 min / 48k examples)
-- [`models/gpt-oss-20b`](models/gpt-oss-20b): vLLM 0.15.1
-- [`models/Qwen3.8-27B`](models/Qwen3.8-27B): the `qwen3_5` generation (Qwen3.5/3.6/3.8), transformers only (no vLLM on this driver), fast kernels, LoRA fine-tuning
+- [Qwen2.5-Coder-7B-Instruct](https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct) (2024-09-17): [`models/Qwen2.5-Coder-7B-Instruct`](models/Qwen2.5-Coder-7B-Instruct), vLLM 0.15.1, base + LoRA adapters; cheap to fine-tune (~75 min / 48k examples)
+- [Llama-3.3-70B-Instruct-FP8-dynamic](https://huggingface.co/RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic) (2024-12-11): [`models/Llama-3.3-70B-Instruct-FP8-dynamic`](models/Llama-3.3-70B-Instruct-FP8-dynamic), vLLM 0.15.1, FP8
+- [Qwen2.5-VL-7B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct) (2025-01-26): [`models/Qwen2.5-VL-7B-Instruct`](models/Qwen2.5-VL-7B-Instruct), vLLM 0.15.1, vision-language
+- [QwQ-32B-AWQ](https://huggingface.co/Qwen/QwQ-32B-AWQ) (2025-03-05): [`models/QwQ-32B-AWQ`](models/QwQ-32B-AWQ), vLLM 0.15.1, AWQ-Marlin, ~78 tok/s
+- [Qwen3-Coder-30B-A3B-Instruct](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct) (2025-07-31): [`models/Qwen3-Coder-30B-A3B-Instruct`](models/Qwen3-Coder-30B-A3B-Instruct), vLLM 0.15.1, ~178 tok/s, `qwen3_coder` tool calls; recipe for recent Qwen3 models
+- [gpt-oss-20b](https://huggingface.co/openai/gpt-oss-20b) (2025-08-04): [`models/gpt-oss-20b`](models/gpt-oss-20b), vLLM 0.15.1
+- [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) (2026-08-05): [`models/Qwen3.8-27B`](models/Qwen3.8-27B), the `qwen3_5` generation (Qwen3.5/3.6/3.8), transformers only (no vLLM on this driver), fast kernels, LoRA fine-tuning
 
 ## Quick Start
 
