@@ -1,0 +1,20 @@
+# Qwen3.8-27B (qwen3_5 architecture): transformers inference + TRL/peft LoRA fine-tuning.
+# No vLLM: builds that know qwen3_5 need a CUDA 13 driver (gpu1 has 12.4), see README.md.
+# causal-conv1d is not listed: it must be built against this torch, run setup.sh.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.9.0+cu128
+torchvision==0.24.0+cu128
+transformers==5.17.0
+accelerate==1.15.0
+safetensors==0.8.0
+trl==1.13.0
+peft==0.21.0
+datasets==5.0.1
+pillow==12.3.0
+einops==0.8.2
+flash-linear-attention==0.5.2
+fla-core==0.5.2
+ninja==1.13.2
+setuptools==84.0.0
+wheel==0.48.0
+packaging==26.3

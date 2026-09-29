@@ -1,0 +1,4 @@
+# vLLM 0.15.1 serving stack (pulls torch 2.9.1 + CUDA 12.8 wheels from PyPI, which run on
+# the gpu1 CUDA 12.4 driver). Same spec as the other vLLM 0.15.1 models, so venv.sh
+# gives them one shared venv.
+vllm==0.15.1
