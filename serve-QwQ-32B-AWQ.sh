@@ -16,13 +16,12 @@ fi
 
 # Start the vLLM server
 echo "Starting vLLM server..."
-uv run python3 -m vllm.entrypoints.openai.api_server \
+uv run vllm serve $MODEL_NAME \
     --host 0.0.0.0 \
     --port 8000 \
     --dtype auto \
     --quantization awq_marlin \
-    --max-model-len 32768 \
-    --model $MODEL_NAME
+    --max-model-len 32768
 
 
 # The server runs in the foreground, so the script will block here
