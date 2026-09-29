@@ -11,6 +11,7 @@ it, and `README.md` has its howto and findings.
 - [`models/QwQ-32B-AWQ`](models/QwQ-32B-AWQ): vLLM 0.15.1, AWQ-Marlin, ~78 tok/s
 - [`models/Llama-3.3-70B-Instruct-FP8-dynamic`](models/Llama-3.3-70B-Instruct-FP8-dynamic): vLLM 0.15.1, FP8
 - [`models/Qwen2.5-VL-7B-Instruct`](models/Qwen2.5-VL-7B-Instruct): vLLM 0.15.1, vision-language
+- [`models/Qwen2.5-Coder-7B-Instruct`](models/Qwen2.5-Coder-7B-Instruct): vLLM 0.15.1, base + LoRA adapters; cheap to fine-tune (~75 min / 48k examples)
 - [`models/gpt-oss-20b`](models/gpt-oss-20b): vLLM 0.15.1
 - [`models/Qwen3.8-27B`](models/Qwen3.8-27B): the `qwen3_5` generation (Qwen3.5/3.6/3.8), transformers only (no vLLM on this driver), fast kernels, LoRA fine-tuning
 
