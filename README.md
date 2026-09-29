@@ -129,8 +129,9 @@ out = model.generate(**inputs, max_new_tokens=80)   # thinking mode on by defaul
 - **It works, but only on the slow eager path.** The `qwen3_5` text stack uses
   linear/hybrid attention whose fast kernels (`flash-linear-attention`,
   `causal-conv1d`) are not installed, so transformers falls back to pure torch:
-  ~2.7 tok/s single-stream. Install those kernels (and use vLLM once it supports the
-  arch) for usable speed. bf16 dense-27B needs ~55 GiB — fits the H100 slice.
+  ~2.7 tok/s single-stream. Install those kernels (see *User-space CUDA toolkit and the
+  fast kernels* below; and use vLLM once it supports the arch) for usable speed. bf16
+  dense-27B needs ~55 GiB — fits the H100 slice.
 - **FP8 is blocked in this container.** `Qwen3.6-27B-FP8` (dynamic e4m3) loads its
   weights, but the finegrained-FP8 matmul is a JIT-compiled DeepGEMM kernel (via the
   `kernels` package) that needs a real CUDA toolkit — `nvcc` is absent in the
@@ -149,6 +150,29 @@ out = model.generate(**inputs, max_new_tokens=80)   # thinking mode on by defaul
   is too old (found version 12040)`. torch **cu128** runs fine on this driver (training
   and the 0.15.1 serve scripts use it). Until there's a cu12x vLLM build that knows
   `qwen3_5`, generate with transformers.
+
+### User-space CUDA toolkit and the fast kernels
+
+The container has no `nvcc`, but you don't need root to get one. `install-cuda-toolkit.sh`
+unpacks NVIDIA's redist tarballs (nvcc, cudart, cccl, nvrtc for 12.8.1, 791 MB) into
+`~/cuda-12.8` and adds the `lib64 -> lib` link that nvcc and torch's `cpp_extension` expect.
+`source cuda-env.sh [venv]` sets `CUDA_HOME`/`PATH`/`LD_LIBRARY_PATH` and puts the header
+dirs of torch's `nvidia-*` pip wheels (cublas, cusparse, ...) on `CPATH`, so those
+libraries don't have to be downloaded again. Code compiled by nvcc 12.8 runs on the
+CUDA 12.4 driver (minor-version compatibility; checked with an sm_90 test kernel).
+
+`install-fast-kernels.sh [venv]` then adds the two kernels the `qwen3_5` fallback warns
+about, with `--no-deps` so torch and transformers stay put:
+- `flash-linear-attention` + `fla-core` (Triton only, needs no nvcc);
+- `causal-conv1d`, **built from source** against the venv's torch (`--no-binary
+  --no-cache --no-build-isolation`, with `setuptools`/`wheel`/`ninja` installed first).
+  A cached or prebuilt wheel imports with `undefined symbol:
+  _ZN3c104cuda29c10_cuda_check_implementation...` (built for another torch).
+
+Afterwards `transformers.utils.import_utils.is_flash_linear_attention_available()` and
+`is_causal_conv1d_available()` are both True. Tested with torch 2.9.0+cu128, fla 0.5.2,
+causal-conv1d 1.7.0. This doesn't make the CUDA-13 vLLM wheels run: they fail on the
+driver, not on the toolkit.
 
 ### LoRA fine-tuning (TRL + peft)
 
