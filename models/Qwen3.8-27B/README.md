@@ -67,8 +67,61 @@ out = model.generate(**inputs, max_new_tokens=80)   # thinking mode on by defaul
   `Qwen3_5ForConditionalGeneration`, but their wheels are built on torch CUDA 13.0 and
   the gpu1 driver is CUDA 12.4: the engine dies with `The NVIDIA driver on your system
   is too old (found version 12040)`. torch **cu128** runs fine on this driver (training
-  and the 0.15.1 serve scripts use it). Until there's a cu12x vLLM build that knows
-  `qwen3_5`, generate with transformers.
+  and the 0.15.1 serve scripts use it). The prebuilt wheels are out, so build from
+  source: see *vLLM 0.24.0 built from source* below.
+
+## vLLM 0.24.0 built from source (2026-09-29/30)
+
+```bash
+VENV=$(bash models/Qwen3.8-27B/build-vllm.sh)                  # ~20 min, once
+python3 models/Qwen3.8-27B/lora_for_vllm.py my-lora my-lora-vllm   # adapters from TRL
+bash models/Qwen3.8-27B/serve-vllm.sh my-lora-vllm sig            # :8000, "Qwen/Qwen3.8-27B" + "sig"
+```
+
+**Outcome: it builds and serves, with the LoRA applied, ~4.6x faster than transformers,
+but the engine intermittently hangs on `n>1` sampling requests.** Details:
+
+- **Version choice.** vLLM 0.28 pins torch 2.13 (cu126/cu129/cu130 wheels only). vLLM
+  **0.24.0** pins torch **2.11.0**, the last torch with a cu128 wheel, and already lists
+  `Qwen3_5ForConditionalGeneration`. `requirements-vllm.txt` is that venv.
+- **Build (`build-vllm.sh`).** Around `uv build --wheel --no-build-isolation`:
+  `use_existing_torch.py` (keep torch cu128); the runtime requirements' `[cu13]` extras
+  swapped (`nvidia-cutlass-dsl` plain, `humming-kernels[cu12]`); a user-space Rust
+  toolchain via rustup (vLLM 0.24 has a Rust frontend); `TORCH_CUDA_ARCH_LIST=9.0`.
+  Result: `~/wheels/vllm-0.24.0+cu128-cp311-cp311-linux_x86_64.whl` (286 MB, ~18 min).
+- **The toolkit needs more than nvcc.** Torch's CMake config wants cublas, cufft, curand,
+  cusparse, cusolver, nvtx, cupti, nvjitlink (`WITH_LIBS=1`, ~2.2 GB of tarballs, 5.6 GB
+  installed). CUDA 12.8's CCCL 2.7 lacks the `cuda::ptx` overloads vLLM's
+  `cooperative_topk.cuh` uses (`mbarrier_try_wait_parity`/`mbarrier_arrive_expect_tx`
+  with `sem_relaxed`, `cp_async_bulk` to shared memory): `CCCL_FROM=12.9.1` overlays the
+  header-only CCCL 2.8.2 from CUDA 12.9.1, and nvcc 12.8 (PTX ISA 8.7) compiles it.
+- **Network.** The pod's DNS drops lookups (github.com, pypi.org, static.rust-lang.org in
+  turn), and CMake FetchContent clones ~10 repos + submodules at configure time. Every
+  download retries; the build retries only on network errors (fetched deps stay in `.deps/`).
+- **Serving.** FlashInfer JIT-compiles kernels at startup (sampling, the gated-delta-net
+  prefill), so `serve-vllm.sh` sources `tools/cuda-env.sh` (else it looks for
+  `/usr/local/cuda/bin/nvcc`). **The pod has 32 CPUs and 128 GiB** (`/sys/fs/cgroup/cpu.max`,
+  `memory.max`) while `nproc` says 224: the unbounded JIT (~70 nvcc at once) got the pod
+  restarted, so `MAX_JOBS=8`. First start ~10 min (JIT), later ~1.5 min (cached in
+  `~/.cache/flashinfer`); weights 51.3 GiB, load 10 s, torch.compile 62 s.
+- **LoRA naming trap.** A TRL/peft adapter trained on `Qwen3_5ForCausalLM` is saved as
+  `base_model.model.model.layers.N...`; vLLM's `Qwen3_5ForConditionalGeneration` expects
+  `model.language_model.layers.N...`. vLLM logs `Loaded new LoRA adapter` and then matches
+  **nothing**: outputs equal the base model's (measured: base 15% vs unrenamed adapter 14%
+  hit@60 on 100 eval examples). `lora_for_vllm.py` renames the keys (992/992 here); then
+  the adapter scores 28% hit@60 on those 100, same as transformers + peft on the full 500
+  (28.4%). The packed GDN projections (`in_proj_qkvz`, `in_proj_ba`) take LoRA fine.
+- **Speed.** n=60 samples, ≤64 tokens, ~500-token prompts: 3.4 s per request with one
+  request in flight (transformers `generate()`: ~13–16 s, even with the fast kernels).
+- **Open bug: `n>1` hangs.** With `"n": 60`, the engine eventually stops generating
+  (`generation throughput: 0.0 tokens/s`, requests stuck as Running/Waiting with the KV
+  cache ~45% used, EngineCore at 100% CPU, no compiler running), after ~25 min at 4–16
+  concurrent requests, and after 379 of 500 requests even at one request in flight. Only
+  a server restart recovers. Not diagnosed: `ptrace` (py-spy) and NVML are blocked in the
+  pod. Suspects: the hybrid (mamba-style) state scheduling of parallel-sampling forks;
+  vLLM also warns about Triton JIT *during* inference for the GDN kernels
+  (`_causal_conv1d_fwd_kernel`, `fused_sigmoid_gating_delta_rule_update_kernel`).
+  Workarounds to try: 60 × `n=1` requests, `--enforce-eager`, a newer vLLM.
 
 ## User-space CUDA toolkit and the fast kernels
 

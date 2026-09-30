@@ -1,0 +1,16 @@
+# Qwen3.8-27B via vLLM 0.24.0 built from source against torch cu12.8 (build-vllm.sh).
+# The prebuilt vLLM wheels that know qwen3_5 are CUDA 13 (driver here is 12.4); vLLM 0.24
+# pins torch 2.11.0, the last torch with a cu128 wheel. This spec is the build venv; the
+# built wheel (~/wheels/vllm-0.24.0*.whl) is installed into it afterwards.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+torchaudio==2.11.0+cu128
+cmake>=3.26.1
+ninja
+packaging>=24.2
+setuptools>=77.0.3,<81.0.0
+setuptools-scm>=8.0
+setuptools-rust>=1.9.0
+wheel
+jinja2
