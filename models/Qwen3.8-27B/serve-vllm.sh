@@ -3,7 +3,9 @@
 # with a LoRA adapter. An adapter trained on the text-only Qwen3_5ForCausalLM must first be
 # renamed with lora_for_vllm.py, or vLLM loads it and silently applies nothing.
 # Usage: bash models/Qwen3.8-27B/serve-vllm.sh [adapter_dir [name=lora]]
-# Keep concurrency low: several concurrent n>1 requests hang the engine (see README.md).
+# Send n separate n=1 requests, not "n": N: n>1 intermittently hangs this engine (README.md);
+# EXTRA_ARGS=--enforce-eager also avoids it, ~50% slower.
+# Usage with extra vLLM flags: EXTRA_ARGS="--enforce-eager" bash .../serve-vllm.sh [adapter [name]]
 DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$DIR/../..
 VENV=$(bash "$ROOT/venv.sh" "$DIR/requirements-vllm.txt") || exit 1
@@ -21,4 +23,5 @@ exec "$VENV/bin/vllm" serve Qwen/Qwen3.8-27B \
     --port 8000 \
     --max-model-len 8192 \
     --gpu-memory-utilization 0.90 \
-    "${LORA[@]}"
+    "${LORA[@]}" \
+    ${EXTRA_ARGS:-}

@@ -78,8 +78,9 @@ python3 models/Qwen3.8-27B/lora_for_vllm.py my-lora my-lora-vllm   # adapters fr
 bash models/Qwen3.8-27B/serve-vllm.sh my-lora-vllm sig            # :8000, "Qwen/Qwen3.8-27B" + "sig"
 ```
 
-**Outcome: it builds and serves, with the LoRA applied, ~4.6x faster than transformers,
-but the engine intermittently hangs on `n>1` sampling requests.** Details:
+**Outcome: it builds and serves, with the LoRA applied, ~4.6x faster than transformers.
+Don't send `n>1` requests: they intermittently hang the engine; send `n` separate `n=1`
+requests instead (same speed, no hang).** Details:
 
 - **Version choice.** vLLM 0.28 pins torch 2.13 (cu126/cu129/cu130 wheels only). vLLM
   **0.24.0** pins torch **2.11.0**, the last torch with a cu128 wheel, and already lists
@@ -113,15 +114,20 @@ but the engine intermittently hangs on `n>1` sampling requests.** Details:
   (28.4%). The packed GDN projections (`in_proj_qkvz`, `in_proj_ba`) take LoRA fine.
 - **Speed.** n=60 samples, ≤64 tokens, ~500-token prompts: 3.4 s per request with one
   request in flight (transformers `generate()`: ~13–16 s, even with the fast kernels).
-- **Open bug: `n>1` hangs.** With `"n": 60`, the engine eventually stops generating
-  (`generation throughput: 0.0 tokens/s`, requests stuck as Running/Waiting with the KV
-  cache ~45% used, EngineCore at 100% CPU, no compiler running), after ~25 min at 4–16
-  concurrent requests, and after 379 of 500 requests even at one request in flight. Only
-  a server restart recovers. Not diagnosed: `ptrace` (py-spy) and NVML are blocked in the
-  pod. Suspects: the hybrid (mamba-style) state scheduling of parallel-sampling forks;
-  vLLM also warns about Triton JIT *during* inference for the GDN kernels
-  (`_causal_conv1d_fwd_kernel`, `fused_sigmoid_gating_delta_rule_update_kernel`).
-  Workarounds to try: 60 × `n=1` requests, `--enforce-eager`, a newer vLLM.
+- **Bug: `n>1` hangs; workarounds measured.** With `"n": 60`, the engine eventually stops
+  generating (`generation throughput: 0.0 tokens/s`, requests stuck as Running/Waiting with
+  the KV cache ~45% used, EngineCore at 100% CPU, no compiler running): after ~10–25 min at
+  4–16 concurrent requests, and after 379 of 500 requests even at one request in flight.
+  Only a server restart recovers. On the same 500 prompts (with the adapter):
+  - **60 × `n=1` requests** (60 in flight, one prompt at a time): 500/500, **no hang**,
+    3.3 s per prompt, task hit@60 30.4%. This is what to use.
+  - **`n=60` with `--enforce-eager`**: 500/500, no hang, 5.1 s per prompt, hit@60 29.4%.
+  So parallel sampling + CUDA graphs is the trigger (prime suspect: graph replay of the GDN
+  state update for forked sequences). Not diagnosed further: `ptrace` and NVML are blocked
+  in the pod (a process can opt in to ptrace with `prctl(PR_SET_PTRACER,
+  PR_SET_PTRACER_ANY)`, which works here). vLLM also warns about Triton JIT *during*
+  inference for the GDN kernels (`_causal_conv1d_fwd_kernel`,
+  `fused_sigmoid_gating_delta_rule_update_kernel`).
 
 ## User-space CUDA toolkit and the fast kernels
 
