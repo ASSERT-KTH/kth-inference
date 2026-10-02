@@ -47,4 +47,45 @@ and `uv run vllm ...`, and the old `serve-*.sh` in the root forward to the model
 - `check-limit-max-tokens.py`: probe the max tokens a served model accepts
 - `test_tool_calling.py`, `test_tool_calling_v2.py`: tool-calling smoke tests
 - `tools/install-cuda-toolkit.sh`, `tools/cuda-env.sh`: user-space CUDA 12.8 toolkit (no root),
-  to build CUDA extensions against torch cu128; see [`models/Qwen3.8-27B`](models/Qwen3.8-27B)
+  to build CUDA extensions against torch cu128 (`WITH_LIBS=1` adds cublas & co., `CCCL_FROM=12.9.1`
+  a newer CCCL, e.g. to build vLLM); see [`models/Qwen3.8-27B`](models/Qwen3.8-27B)
+- `tools/sitecustomize_ptrace.py`, `tools/hang_dump.sh`: stack dumps of hung processes (below)
+
+## The gpu1 pod (what the machine really is)
+
+Measured 2026-09/10 inside the JupyterHub pod:
+- **1× H100 80GB as a MIG 7g.80gb instance** (the whole GPU), driver 535.247.01 = **CUDA 12.4**:
+  wheels built for CUDA 13 fail (`The NVIDIA driver on your system is too old`); cu12x wheels
+  (torch cu128, our vLLM builds) run fine.
+- **32 CPUs and 128 GiB RAM**, from `/sys/fs/cgroup/cpu.max` and `memory.max`, although
+  `nproc` / `free` show the host's 224 cores and 2 TB. Tools that size parallelism from `nproc`
+  (ninja, JIT compilers) oversubscribe the pod; an unbounded JIT got it OOM-restarted. Set
+  `MAX_JOBS` explicitly.
+- **A restart of the pod wipes `/tmp`** (and anything outside `$HOME`). Keep builds' outputs,
+  wheels, checkpoints and adapters in `$HOME`.
+- **The network is unreliable**: DNS lookups fail for minutes at a time (github.com, pypi.org,
+  static.rust-lang.org in turn), sometimes the whole network. Retry downloads
+  (`curl --retry 8 --retry-all-errors`), and start servers of cached models with
+  `HF_HUB_OFFLINE=1` (vLLM otherwise fails engine start-up asking the Hub for a file list).
+- **No root, no `nvcc`** (see `tools/install-cuda-toolkit.sh`), **no `ptrace` between
+  processes** (Yama `ptrace_scope=1`, no `CAP_SYS_PTRACE`, `NoNewPrivs=1`), and **NVML can't
+  read MIG memory** (`nvidia-smi --query-gpu=memory.used` → `[Insufficient Permissions]`;
+  GPU utilization is `Not Supported` on MIG in NVML anyway; `nvidia-smi`'s table does show
+  per-MIG memory).
+- `/home/jovyan` is shared and ~98% full: share venvs (`venv.sh`), don't duplicate models.
+
+## Debugging a hung server in this pod
+
+ptrace works for processes that opt in with `prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY)`.
+Install the opt-in into a venv once, so every Python process of it (and their forks / spawns)
+can be traced:
+
+```bash
+SP=$(VENV/bin/python -c 'import site; print(site.getsitepackages()[0])')
+cp tools/sitecustomize_ptrace.py "$SP/sitecustomize.py"
+bash tools/hang_dump.sh VENV ~/vllm.log      # py-spy --native of the API server and EngineCore
+```
+
+Processes started before the install aren't opted in (`Permission Denied`). This is how the
+Qwen3.8-27B vLLM hang was located (a GPU-side stall seen from a blocked cuBLAS launch,
+[`models/Qwen3.8-27B`](models/Qwen3.8-27B)).

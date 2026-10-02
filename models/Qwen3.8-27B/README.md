@@ -114,20 +114,32 @@ requests instead (same speed, no hang).** Details:
   (28.4%). The packed GDN projections (`in_proj_qkvz`, `in_proj_ba`) take LoRA fine.
 - **Speed.** n=60 samples, ≤64 tokens, ~500-token prompts: 3.4 s per request with one
   request in flight (transformers `generate()`: ~13–16 s, even with the fast kernels).
-- **Bug: `n>1` hangs; workarounds measured.** With `"n": 60`, the engine eventually stops
-  generating (`generation throughput: 0.0 tokens/s`, requests stuck as Running/Waiting with
-  the KV cache ~45% used, EngineCore at 100% CPU, no compiler running): after ~10–25 min at
-  4–16 concurrent requests, and after 379 of 500 requests even at one request in flight.
-  Only a server restart recovers. On the same 500 prompts (with the adapter):
-  - **60 × `n=1` requests** (60 in flight, one prompt at a time): 500/500, **no hang**,
-    3.3 s per prompt, task hit@60 30.4%. This is what to use.
-  - **`n=60` with `--enforce-eager`**: 500/500, no hang, 5.1 s per prompt, hit@60 29.4%.
-  So parallel sampling + CUDA graphs is the trigger (prime suspect: graph replay of the GDN
-  state update for forked sequences). Not diagnosed further: `ptrace` and NVML are blocked
-  in the pod (a process can opt in to ptrace with `prctl(PR_SET_PTRACER,
-  PR_SET_PTRACER_ANY)`, which works here). vLLM also warns about Triton JIT *during*
-  inference for the GDN kernels (`_causal_conv1d_fwd_kernel`,
-  `fused_sigmoid_gating_delta_rule_update_kernel`).
+- **Bug: the engine hangs under sustained load, in every setting tried.** Generation stops
+  for good: with CUDA graphs the stats keep logging `generation throughput: 0.0 tokens/s`
+  with requests stuck Running/Waiting (KV cache ~40–50% used); with `--enforce-eager` the
+  stats log goes silent. EngineCore spins at 100% CPU; only a restart recovers. Measured
+  over ~20 h of load: `n=60` and 60 × `n=1` requests, 1 to 180 in flight, CUDA graphs and
+  eager all hang eventually, typically every 30–60 min of continuous load (single runs that
+  passed 500 prompts were luck). An earlier version of this note said `n=1` or eager avoid
+  it: wrong. A 90-min A/B with and without `--enable-lora` saw no hang in either, so the
+  LoRA's role is open.
+  - **Where it hangs** (`py-spy dump --native`, see *Debugging in this pod* below): the
+    EngineCore main thread is in `execute_model` → model forward → decoder layer → MLP →
+    LoRA column-parallel linear → `cublasGemmEx`, spinning in `sched_yield` inside
+    `libcuda`: a kernel *launch* blocks because the GPU stopped draining the stream, i.e. an
+    earlier kernel never finishes (a GPU-side stall). Suspects: the gated-delta-net Triton
+    kernels (vLLM warns they are JIT-compiled *during* inference:
+    `_causal_conv1d_fwd_kernel`, `fused_sigmoid_gating_delta_rule_update_kernel`) or the
+    LoRA (punica) Triton kernels.
+  - **Living with it:** short client timeouts (180 s for a 64-token completion), per-item
+    results written as you go with resume, and a watchdog that restarts vLLM when generation
+    is 0 tok/s with requests Running, *or* requests are Running and the log has been silent
+    for 5 min (the eager shape). Restart costs ~2 min (FlashInfer kernels cached). 60 × `n=1`
+    requests per prompt (CUDA graphs on) is the fastest setting: 3.3 s per prompt.
+- **Start vLLM offline.** At start-up vLLM asks the Hub for the model's file list even when
+  the model is cached; when the pod's network is down (it happens: `Network is unreachable`,
+  `Temporary failure in name resolution`), engine init fails. `serve-vllm.sh` sets
+  `HF_HUB_OFFLINE=1` (override with `HF_HUB_OFFLINE=0` to download a new model).
 
 ## User-space CUDA toolkit and the fast kernels
 

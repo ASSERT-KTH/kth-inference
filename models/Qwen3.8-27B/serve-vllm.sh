@@ -3,8 +3,8 @@
 # with a LoRA adapter. An adapter trained on the text-only Qwen3_5ForCausalLM must first be
 # renamed with lora_for_vllm.py, or vLLM loads it and silently applies nothing.
 # Usage: bash models/Qwen3.8-27B/serve-vllm.sh [adapter_dir [name=lora]]
-# Send n separate n=1 requests, not "n": N: n>1 intermittently hangs this engine (README.md);
-# EXTRA_ARGS=--enforce-eager also avoids it, ~50% slower.
+# This engine hangs under sustained load in every setting tried (README.md): use short client
+# timeouts, resumable work and a restart watchdog. 60 x n=1 requests per prompt is fastest.
 # Usage with extra vLLM flags: EXTRA_ARGS="--enforce-eager" bash .../serve-vllm.sh [adapter [name]]
 DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$DIR/../..
@@ -14,6 +14,8 @@ VENV=$(bash "$ROOT/venv.sh" "$DIR/requirements-vllm.txt") || exit 1
 source "$ROOT/tools/cuda-env.sh" "$VENV"
 # the pod has 32 CPUs / 128 GiB but nproc says 224: an unbounded JIT (~70 nvcc) got it OOM-restarted
 export MAX_JOBS=${MAX_JOBS:-8}
+# the model is cached; a pod network outage must not fail engine start-up on a Hub file list
+export HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
 LORA=()
 if [ -n "${1:-}" ]; then
     LORA=(--enable-lora --max-lora-rank "${MAX_LORA_RANK:-16}" --lora-modules "${2:-lora}=$(realpath "$1")")
