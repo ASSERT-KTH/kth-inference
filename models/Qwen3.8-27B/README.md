@@ -197,3 +197,19 @@ Throughput: ~1.7 samples/s (prompts ~300 tokens median, ~19 s per 32-example
 step) vs ~10.8 samples/s for Qwen2.5-Coder-7B with the same data, so about 8 h
 per epoch of 48k examples. Also check with transformers 5: `warmup_ratio` is gone
 from `TrainingArguments`; use `warmup_steps=<float in [0,1)>` for a ratio.
+
+**Train without the fast kernels.** Once `flash-linear-attention` is installed (`setup.sh`),
+transformers uses it for the gated-delta-net layers in training too, and fla 0.5.2 refuses the
+backward pass: `RuntimeError: Triton >= 3.4.0 and < 3.7.1 on Hopper GPUs produces incorrect
+results for gated chunk_bwd_dqkwg`. torch 2.9 pins Triton 3.5, so don't upgrade Triton: keep fla
+for inference only and make the training process unable to import it, *before* transformers
+loads the model (it tries hub kernels, then the original package, then the torch path; the
+`USE_HUB_KERNELS=NO` environment variable only disables the first):
+
+```python
+import sys
+sys.modules["fla"] = None            # `import fla` now raises ImportError -> torch path
+sys.modules["causal_conv1d"] = None
+```
+
+Speed is the same as without fla installed (~1.6 samples/s here).
