@@ -1,0 +1,5 @@
+# Qwen3.8-27B via the prebuilt vLLM 0.31.0 wheel (CUDA 13.0, torch cu130). The gpu1 driver is
+# CUDA 12.4: it runs through NVIDIA's CUDA forward compatibility (tools/cuda13-env.sh), no build.
+--extra-index-url https://download.pytorch.org/whl/cu130
+vllm==0.31.0
+torch==2.13.0+cu130

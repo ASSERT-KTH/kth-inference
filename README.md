@@ -14,7 +14,7 @@ Hugging Face repo was created (`createdAt` in the Hub API).
 - [QwQ-32B-AWQ](https://huggingface.co/Qwen/QwQ-32B-AWQ) (2025-03-05): [`models/QwQ-32B-AWQ`](models/QwQ-32B-AWQ), vLLM 0.15.1, AWQ-Marlin, ~78 tok/s
 - [Qwen3-Coder-30B-A3B-Instruct](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct) (2025-07-31): [`models/Qwen3-Coder-30B-A3B-Instruct`](models/Qwen3-Coder-30B-A3B-Instruct), vLLM 0.15.1, ~178 tok/s, `qwen3_coder` tool calls; recipe for recent Qwen3 models
 - [gpt-oss-20b](https://huggingface.co/openai/gpt-oss-20b) (2025-08-04): [`models/gpt-oss-20b`](models/gpt-oss-20b), vLLM 0.15.1
-- [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) (2026-08-05): [`models/Qwen3.8-27B`](models/Qwen3.8-27B), the `qwen3_5` generation (Qwen3.5/3.6/3.8): transformers + fast kernels, LoRA fine-tuning, and vLLM 0.24.0 built from source against cu128 (serves with LoRA; `n>1` sampling intermittently hangs)
+- [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) (2026-08-05): [`models/Qwen3.8-27B`](models/Qwen3.8-27B), the `qwen3_5` generation (Qwen3.5/3.6/3.8): transformers + fast kernels, LoRA fine-tuning, and vLLM 0.31.0 prebuilt (CUDA 13 through forward compatibility, `serve-vllm-cu130.sh`; the older vLLM 0.24.0 source build against cu128 hangs under load)
 
 ## Quick Start
 
@@ -49,6 +49,9 @@ and `uv run vllm ...`, and the old `serve-*.sh` in the root forward to the model
 - `tools/install-cuda-toolkit.sh`, `tools/cuda-env.sh`: user-space CUDA 12.8 toolkit (no root),
   to build CUDA extensions against torch cu128 (`WITH_LIBS=1` adds cublas & co., `CCCL_FROM=12.9.1`
   a newer CCCL, e.g. to build vLLM); see [`models/Qwen3.8-27B`](models/Qwen3.8-27B)
+- `tools/cuda13-env.sh`: CUDA 13 on the 12.4 driver (forward compatibility, installed on first
+  use), for prebuilt cu130 wheels such as recent vLLM
+- `tools/soak.py`: sustained-load hang test for a served model (`python tools/soak.py PORT MINUTES out.jsonl`)
 - `tools/sitecustomize_ptrace.py`, `tools/hang_dump.sh`: stack dumps of hung processes (below)
 
 ## The gpu1 pod (what the machine really is)
@@ -56,7 +59,9 @@ and `uv run vllm ...`, and the old `serve-*.sh` in the root forward to the model
 Measured 2026-09/10 inside the JupyterHub pod:
 - **1× H100 80GB as a MIG 7g.80gb instance** (the whole GPU), driver 535.247.01 = **CUDA 12.4**:
   wheels built for CUDA 13 fail (`The NVIDIA driver on your system is too old`); cu12x wheels
-  (torch cu128, our vLLM builds) run fine.
+  (torch cu128, our vLLM builds) run fine. **CUDA 13 works with forward compatibility**
+  (`source tools/cuda13-env.sh VENV`: a user-space libcuda 580, no root). Torch cu130 and vLLM
+  0.31.0 run with it, see [`models/Qwen3.8-27B`](models/Qwen3.8-27B). Use it only for cu13 venvs.
 - **32 CPUs and 128 GiB RAM**, from `/sys/fs/cgroup/cpu.max` and `memory.max`, although
   `nproc` / `free` show the host's 224 cores and 2 TB. Tools that size parallelism from `nproc`
   (ninja, JIT compilers) oversubscribe the pod; an unbounded JIT got it OOM-restarted. Set

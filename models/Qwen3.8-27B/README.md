@@ -68,9 +68,56 @@ out = model.generate(**inputs, max_new_tokens=80)   # thinking mode on by defaul
   the gpu1 driver is CUDA 12.4: the engine dies with `The NVIDIA driver on your system
   is too old (found version 12040)`. torch **cu128** runs fine on this driver (training
   and the 0.15.1 serve scripts use it). The prebuilt wheels are out, so build from
-  source: see *vLLM 0.24.0 built from source* below.
+  source: see *vLLM 0.24.0 built from source* below. **Update 2026-10-12:** the prebuilt
+  wheels do run with CUDA forward compatibility: see *vLLM 0.31.0 prebuilt* below.
+
+## vLLM 0.31.0 prebuilt, CUDA 13 on the 12.4 driver (2026-10-12): use this
+
+```bash
+bash models/Qwen3.8-27B/serve-vllm-cu130.sh                       # :8000, "Qwen/Qwen3.8-27B"
+bash models/Qwen3.8-27B/serve-vllm-cu130.sh my-lora-vllm sig      # + LoRA (untested here)
+```
+
+**Outcome: the stock PyPI vLLM 0.31.0 (torch 2.13.0+cu130) serves Qwen3.8-27B on gpu1.
+There's no source build, and it ran 91 min of sustained load (35,480 requests, a quarter of them `n=8`)
+without a hang.** Details:
+
+- **How CUDA 13 runs on a CUDA 12.4 driver.** NVIDIA's CUDA forward compatibility (`cuda-compat-13-0`)
+  is a newer user-space `libcuda` (580.178.04) that sits on top of the 535 kernel driver.
+  `/datasets/local_installs/cuda13/install_cuda13.sh` (the gpu1 admins' recipe) unpacks it and a
+  minimal nvcc 13.0 into `~/.local/cuda13`, without root (577 MB). `tools/cuda13-env.sh`
+  installs it on first use and puts `.../compat` first on `LD_LIBRARY_PATH`. Without it, torch
+  cu130 says `NVIDIA driver on your system is too old (found version 12040)`.
+  `nvidia-smi`'s "CUDA Version" header shows whether the env is active: 12.4 bare, 13.0 with it.
+- **FlashInfer's JIT needs cuRAND headers.** At first start FlashInfer compiles its top-k/top-p
+  sampler with `$CUDA_HOME/bin/nvcc`. The minimal toolkit has no `curand.h`, and there are three ways to get it wrong:
+  - leaving out `CUDA_HOME` makes FlashInfer look for `/usr/local/cuda/bin/nvcc`, which is absent;
+  - putting the venv's whole `nvidia/cu13/include` on `CPATH` shadows nvcc's own `crt/` headers
+    (version mismatch: `'__cudaLaunch' was not declared`);
+  - the fix in `cuda13-env.sh`: `CPATH` gets a directory of symlinks to only `curand*.h`. The compiled op
+    is cached in `~/.cache/flashinfer`.
+- **Start-up: ~3 min the first time with a new venv (FlashInfer JIT), ~90 s after that, versus 10 min for 0.24.0.**
+  Weights take 51.1 GiB and load in 16 s, torch.compile takes 20 s,
+  and the KV cache holds 166k tokens at 8192 context. The GDN prefill is
+  FlashInfer's (vLLM: `--gdn-prefill-backend triton` skips that JIT).
+- **Checks, all passing (temperature 0, thinking off unless noted):**
+  - arithmetic (17×23 = 391);
+  - `is_prime` code;
+  - a needle in a 5.4k-token prompt (exercises GDN prefill);
+  - an image input (red square → "Red");
+  - thinking mode on ("is 221 prime" → no, 13×17).
+- **Soak (the 0.24.0 build's hang): passed.** 91 min, 35,480 requests (~390/min), 0 errors,
+  0 timeouts, no Triton JIT during inference. It's one run, so if your workload hangs, keep a watchdog.
+  `tools/soak.py`: 48 requests in flight, ~400-token prompts, ≤64 tokens, temperature 1, 25% of requests
+  with `n=8` (the setting that hung 0.24.0 every 30–60 min). A hang is any request over 180 s, or no
+  completion for 5 min. The detector was validated by SIGSTOPping the EngineCore mid-run:
+  it reported HANG.
+- **Venv.** `requirements-vllm-cu130.txt` is its own venv (~10 GB). It shares nothing with the
+  cu128 venvs, and the 0.24.0 build stays available as a fallback.
 
 ## vLLM 0.24.0 built from source (2026-09-29/30)
+
+Superseded by vLLM 0.31.0 + CUDA 13 above; kept as a cu128 fallback.
 
 ```bash
 VENV=$(bash models/Qwen3.8-27B/build-vllm.sh)                  # ~20 min, once
