@@ -43,7 +43,7 @@ out = model.generate(**inputs, max_new_tokens=80)   # thinking mode on by defaul
 |-------|-------|------|-----------|--------|--------|
 | Qwen3.8-27B | bf16 | ~34s | 54.9 GiB | ~2.7 tok/s | runs (eager path) |
 | Qwen3.6-27B | bf16 | ~36s | 54.9 GiB | ~2.7 tok/s | runs (eager path) |
-| Qwen3.6-27B-FP8 | fp8 dynamic | — | — | — | **blocked** (see below) |
+| Qwen3.6-27B-FP8 | fp8 dynamic | — | — | — | **blocked** in transformers/cu128 (see below); **runs** in vLLM 0.31.0 + CUDA 13 |
 
 - **It works, but only on the slow eager path.** The `qwen3_5` text stack uses
   linear/hybrid attention whose fast kernels (`flash-linear-attention`,
@@ -56,7 +56,8 @@ out = model.generate(**inputs, max_new_tokens=80)   # thinking mode on by defaul
   `kernels` package) that needs a real CUDA toolkit — `nvcc` is absent in the
   JupyterHub container (`std::filesystem::exists(nvcc_path)` assertion), and the pip
   `nvidia-cuda-nvcc-cu12` wheel ships only `ptxas`, not `nvcc`. So run the **bf16**
-  weights here, or serve FP8 from a container that has the CUDA toolkit.
+  weights here, or serve FP8 from a container that has the CUDA toolkit. **Update 2026-10-12:**
+  FP8 serves with vLLM 0.31.0 + CUDA 13 (*FP8: Qwen3.6-27B-FP8* below).
 - **Version pinning matters.** transformers 5.9.0 requires `kernels>=0.12,<0.13`;
   the current `kernels` (0.16.x) breaks the transformers import
   (`LayerRepository ... revision or a version must be specified`).
@@ -89,13 +90,18 @@ without a hang.** Details:
   installs it on first use and puts `.../compat` first on `LD_LIBRARY_PATH`. Without it, torch
   cu130 says `NVIDIA driver on your system is too old (found version 12040)`.
   `nvidia-smi`'s "CUDA Version" header shows whether the env is active: 12.4 bare, 13.0 with it.
-- **FlashInfer's JIT needs cuRAND headers.** At first start FlashInfer compiles its top-k/top-p
-  sampler with `$CUDA_HOME/bin/nvcc`. The minimal toolkit has no `curand.h`, and there are three ways to get it wrong:
+- **FlashInfer's JIT needs CUDA libraries the minimal toolkit lacks.** At first start FlashInfer
+  compiles kernels with `$CUDA_HOME/bin/nvcc`. Its sampler needs `curand.h`; the FP8 DeepGEMM path
+  needs `cublasLt.h`, `nvrtc.h`, `-lcublasLt` and `-lnvrtc`. The venv's `nvidia/cu13` pip wheel
+  has all of them. What doesn't work:
   - leaving out `CUDA_HOME` makes FlashInfer look for `/usr/local/cuda/bin/nvcc`, which is absent;
-  - putting the venv's whole `nvidia/cu13/include` on `CPATH` shadows nvcc's own `crt/` headers
+  - putting the wheel's whole `include` dir on `CPATH` shadows nvcc's own `crt/` headers
     (version mismatch: `'__cudaLaunch' was not declared`);
-  - the fix in `cuda13-env.sh`: `CPATH` gets a directory of symlinks to only `curand*.h`. The compiled op
-    is cached in `~/.cache/flashinfer`.
+  - the wheel ships only `libX.so.N`, so `-lX` doesn't find it.
+
+  `cuda13-env.sh` therefore builds `$VENV/cu13-extra/`. Its `include/` links only the wheel's headers
+  that the toolkit does *not* have (`CPATH`), and its `lib/` holds unversioned `libX.so` links (`LIBRARY_PATH`).
+  The compiled ops are cached in `~/.cache/flashinfer`.
 - **Start-up: ~3 min the first time with a new venv (FlashInfer JIT), ~90 s after that, versus 10 min for 0.24.0.**
   Weights take 51.1 GiB and load in 16 s, torch.compile takes 20 s,
   and the KV cache holds 166k tokens at 8192 context. The GDN prefill is
@@ -114,6 +120,20 @@ without a hang.** Details:
   it reported HANG.
 - **Venv.** `requirements-vllm-cu130.txt` is its own venv (~10 GB). It shares nothing with the
   cu128 venvs, and the 0.24.0 build stays available as a fallback.
+
+### FP8: Qwen3.6-27B-FP8
+
+```bash
+MODEL=Qwen/Qwen3.6-27B-FP8 bash models/Qwen3.8-27B/serve-vllm-cu130.sh
+```
+
+This is the checkpoint that is blocked in transformers on cu128 (above). Same venv and env.
+
+- vLLM selects `FlashInferFp8DeepGEMMDynamicBlockScaledKernel` for `Fp8LinearMethod`.
+- Weights take 28.5 GiB, and the KV cache holds 391k tokens at 8192 context.
+- The first start takes ~5 min because it JIT-compiles FlashInfer's `fp8_blockscale_gemm_90`. That compile needs the `cu13-extra` headers and libs.
+- The same 5 checks pass.
+- Soak (`tools/soak.py`, same load as above): passed, 21 min, 10,883 requests (~520/min), 0 errors, 0 timeouts.
 
 ## vLLM 0.24.0 built from source (2026-09-29/30)
 

@@ -4,6 +4,7 @@
 # first use. The LoRA option is the same as serve-vllm.sh (rename adapters with lora_for_vllm.py).
 # Usage: bash models/Qwen3.8-27B/serve-vllm-cu130.sh [adapter_dir [name=lora]]
 # Usage with extra vLLM flags: EXTRA_ARGS="--port 8001" bash .../serve-vllm-cu130.sh
+# Another qwen3_5 checkpoint: MODEL=Qwen/Qwen3.6-27B-FP8 bash .../serve-vllm-cu130.sh
 DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$DIR/../..
 VENV=$(bash "$ROOT/venv.sh" "$DIR/requirements-vllm-cu130.txt") || exit 1
@@ -17,7 +18,7 @@ LORA=()
 if [ -n "${1:-}" ]; then
     LORA=(--enable-lora --max-lora-rank "${MAX_LORA_RANK:-16}" --lora-modules "${2:-lora}=$(realpath "$1")")
 fi
-exec "$VENV/bin/vllm" serve Qwen/Qwen3.8-27B \
+exec "$VENV/bin/vllm" serve "${MODEL:-Qwen/Qwen3.8-27B}" \
     --host 0.0.0.0 \
     --port 8000 \
     --max-model-len 8192 \
